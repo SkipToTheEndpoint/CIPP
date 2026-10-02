@@ -102,6 +102,7 @@ export const CippSettingsSideBar = (props) => {
         KeepCopy: formValues.offboardingDefaults?.KeepCopy,
         DeleteUser: formValues.offboardingDefaults?.DeleteUser,
         RemoveMobile: formValues.offboardingDefaults?.RemoveMobile,
+        WipeMobile: formValues.offboardingDefaults?.WipeMobile,
         DisableSignIn: formValues.offboardingDefaults?.DisableSignIn,
         RemoveMFADevices: formValues.offboardingDefaults?.RemoveMFADevices,
         RemoveTeamsPhoneDID: formValues.offboardingDefaults?.RemoveTeamsPhoneDID,
@@ -113,6 +114,7 @@ export const CippSettingsSideBar = (props) => {
           psa: formValues.offboardingDefaults?.postExecution?.psa,
           email: formValues.offboardingDefaults?.postExecution?.email,
           webhook: formValues.offboardingDefaults?.postExecution?.webhook,
+          push: formValues.offboardingDefaults?.postExecution?.push,
         },
       },
     };

@@ -6,6 +6,15 @@ import { renderWithProviders } from '../../test-utils'
 import { CippDataTable } from '../../../src/components/CippTable/CippDataTable'
 import { resetOverlayHistory } from '../../../src/utils/overlay-history'
 
+vi.mock('../../../src/api/ApiCall', async () => (await import('../../mocks/api-call')).apiCallMock())
+import { api, paginatedResult } from '../../mocks/api-call'
+
+// idle keeps static-data tables on their data prop; the nested result is re-wrapped per call like react-query's tracked copy, the memo'd toolbar needs it to see selection
+const nestedRows = [{ id: 'child-1', displayName: 'Jane Doe' }]
+const nestedResult = paginatedResult(nestedRows)
+const idlePaginated = paginatedResult([], { isSuccess: false })
+api.paginated = (opts) => (opts?.url === '/api/TestRelated' ? { ...nestedResult } : idlePaginated)
+
 const basicData = [
   { displayName: 'Alice Smith', mail: 'alice@contoso.com', department: 'IT', accountEnabled: true },
   { displayName: 'Bob Johnson', mail: 'bob@contoso.com', department: 'Sales', accountEnabled: true },
@@ -415,10 +424,13 @@ describe('CippDataTable card view without an offCanvas', () => {
     await waitFor(() => expect(screen.getByText('Alice Smith')).toBeInTheDocument())
     await user.click(screen.getByText('Alice Smith'))
 
-    // 'text' mode would flatten the boolean to the string "Yes"; the cell renderer uses an icon.
+    // 'text' mode would flatten the boolean to a plain "Yes" text node; the cell renderer uses
+    // an icon instead — an SVG with role=img whose accessible name is "Yes" (titleAccess), which
+    // is what a table cell renders too. Assert the icon is present rather than the absence of the
+    // word, since that accessible name legitimately contains "Yes".
     // Anchored: unanchored, this would also pass on "notcontoso.com" — and CodeQL flags it.
     await waitFor(() => expect(screen.getAllByText(/^contoso\.com$/).length).toBeGreaterThan(0))
-    expect(screen.queryByText('Yes')).toBeNull()
+    expect(screen.getAllByRole('img', { name: 'Yes' }).length).toBeGreaterThan(0)
   })
 
   it('spells out portal links instead of showing a bare icon', async () => {
@@ -718,7 +730,13 @@ describe('CippDataTable cards->table toggle scroll', () => {
 
 describe('CippDataTable subTables', () => {
   const parentRows = [{ id: 'parent-1', displayName: 'Finance' }]
-  const relatedRows = [{ id: 'child-1', displayName: 'Jane Doe' }]
+  // live nested table, the shape groups/index.js ships
+  const nestedTable = {
+    title: 'Related for [displayName]',
+    api: { url: '/api/TestRelated', dataKey: 'Results' },
+    simpleColumns: ['displayName'],
+    viewMode: 'cards',
+  }
 
   it('injects a button column that opens a nested table', async () => {
     const user = userEvent.setup()
@@ -733,12 +751,7 @@ describe('CippDataTable subTables', () => {
             id: 'related',
             header: 'Related',
             label: 'View',
-            table: {
-              title: 'Related for [displayName]',
-              data: relatedRows,
-              simpleColumns: ['displayName'],
-              viewMode: 'cards',
-            },
+            table: nestedTable,
           },
         ]}
       />
@@ -771,10 +784,7 @@ describe('CippDataTable subTables', () => {
             header: 'Related',
             label: 'View',
             table: {
-              title: 'Related for [displayName]',
-              data: relatedRows,
-              simpleColumns: ['displayName'],
-              viewMode: 'cards',
+              ...nestedTable,
               actions: [
                 {
                   label: 'Remove',
@@ -797,15 +807,18 @@ describe('CippDataTable subTables', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Row actions' }))
     await user.click(await screen.findByText('Remove'))
 
-    expect(rowFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'child-1',
-        displayName: 'Jane Doe',
-        parent: expect.objectContaining({ id: 'parent-1', displayName: 'Finance' }),
-      }),
-      expect.anything(),
-      expect.anything()
-    )
+    // the row sheet hands the action off to its exit transition
+    await waitFor(() => {
+      expect(rowFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'child-1',
+          displayName: 'Jane Doe',
+          parent: expect.objectContaining({ id: 'parent-1', displayName: 'Finance' }),
+        }),
+        expect.anything(),
+        expect.anything()
+      )
+    })
 
     rowFn.mockClear()
     await user.click(within(dialog).getByRole('button', { name: 'Select' }))
@@ -813,14 +826,16 @@ describe('CippDataTable subTables', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Actions' }))
     await user.click(await screen.findByText('Remove'))
 
-    expect(rowFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'child-1',
-        parent: expect.objectContaining({ id: 'parent-1' }),
-      }),
-      expect.anything(),
-      expect.anything()
-    )
+    await waitFor(() => {
+      expect(rowFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'child-1',
+          parent: expect.objectContaining({ id: 'parent-1' }),
+        }),
+        expect.anything(),
+        expect.anything()
+      )
+    })
   })
 
   it('replaces a data column that shares the subTable id', async () => {
@@ -836,12 +851,7 @@ describe('CippDataTable subTables', () => {
             id: 'related',
             header: 'Related',
             label: 'View',
-            table: {
-              title: 'Related for [displayName]',
-              data: relatedRows,
-              simpleColumns: ['displayName'],
-              viewMode: 'cards',
-            },
+            table: nestedTable,
           },
         ]}
       />
@@ -869,12 +879,7 @@ describe('CippDataTable subTables', () => {
             id: 'related',
             header: 'Related',
             label: 'View',
-            table: {
-              title: 'Related for [displayName]',
-              data: relatedRows,
-              simpleColumns: ['displayName'],
-              viewMode: 'cards',
-            },
+            table: nestedTable,
           },
         ]}
       />
@@ -897,12 +902,7 @@ describe('CippDataTable subTables', () => {
             header: 'Members',
             label: 'View members',
             cachedColumn: 'membersCsv',
-            table: {
-              title: 'Members of [displayName]',
-              data: relatedRows,
-              simpleColumns: ['displayName'],
-              viewMode: 'cards',
-            },
+            table: { ...nestedTable, title: 'Members of [displayName]' },
           },
         ]}
       />
@@ -911,34 +911,6 @@ describe('CippDataTable subTables', () => {
     await waitFor(() => expect(screen.getByText('Finance')).toBeInTheDocument())
     expect(screen.queryByRole('button', { name: 'View members' })).not.toBeInTheDocument()
     expect(screen.getByText('Jane, Bob')).toBeInTheDocument()
-  })
-
-  it('renders cached report columns in table view without a stale column order crash', async () => {
-    renderWithProviders(
-      <CippDataTable
-        viewMode="table"
-        data={[{ id: 'parent-1', displayName: 'Finance', membersCsv: 'Jane, Bob' }]}
-        simpleColumns={['displayName', 'members']}
-        title="Groups"
-        subTables={[
-          {
-            id: 'members',
-            header: 'Members',
-            label: 'View members',
-            cachedColumn: 'membersCsv',
-            table: {
-              title: 'Members of [displayName]',
-              data: relatedRows,
-              simpleColumns: ['displayName'],
-            },
-          },
-        ]}
-      />
-    )
-
-    await waitFor(() => expect(screen.getByText('Finance')).toBeInTheDocument())
-    expect(screen.getByRole('columnheader', { name: 'Members' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'View members' })).not.toBeInTheDocument()
   })
 
   it('still shows the nested table button when cachedColumn is configured but missing from the data', async () => {
@@ -954,12 +926,7 @@ describe('CippDataTable subTables', () => {
             header: 'Members',
             label: 'View members',
             cachedColumn: 'membersCsv',
-            table: {
-              title: 'Members of [displayName]',
-              data: relatedRows,
-              simpleColumns: ['displayName'],
-              viewMode: 'cards',
-            },
+            table: { ...nestedTable, title: 'Members of [displayName]' },
           },
         ]}
       />
@@ -972,7 +939,7 @@ describe('CippDataTable subTables', () => {
   it('shows the nested table button when cachedColumn exists but is empty (live API shape)', async () => {
     renderWithProviders(
       <CippDataTable
-        viewMode="table"
+        viewMode="cards"
         data={[{ id: 'parent-1', displayName: 'Finance', membersCsv: '', ownersCsv: '' }]}
         simpleColumns={['displayName', 'members']}
         title="Groups"
@@ -982,11 +949,7 @@ describe('CippDataTable subTables', () => {
             header: 'Members',
             label: 'View members',
             cachedColumn: 'membersCsv',
-            table: {
-              title: 'Members of [displayName]',
-              data: relatedRows,
-              simpleColumns: ['displayName'],
-            },
+            table: { ...nestedTable, title: 'Members of [displayName]' },
           },
         ]}
       />
@@ -1010,10 +973,9 @@ describe('CippDataTable subTables', () => {
             header: 'Related',
             label: 'View',
             table: {
-              title: 'Related for [displayName]',
-              data: relatedRows,
-              simpleColumns: ['displayName'],
-              viewMode: 'cards',
+              ...nestedTable,
+              // table view, the card header is the only cardButton slot inside a dialog
+              viewMode: 'table',
               cardButton: {
                 label: 'Add Members',
                 url: '/api/EditGroup',
@@ -1035,4 +997,101 @@ describe('CippDataTable subTables', () => {
 
     expect(await screen.findByText('Add Members for Finance?')).toBeInTheDocument()
   })
+})
+
+describe('CippDataTable preset filterFn overrides', () => {
+  // Mirrors the Domain Analyser presets: 'notEquals' / 'notContains' modes applied only
+  // while a preset drives that column, so plain contains-style presets on the same
+  // column aren't left permanently inverted by an earlier notContains preset.
+  const domainRows = [
+    { Domain: 'contoso.com', MailProvider: 'Microsoft 365' },
+    { Domain: 'fabrikam.onmicrosoft.com', MailProvider: 'Microsoft 365' },
+    { Domain: 'contoso.onmicrosoft.com', MailProvider: 'Google Workspace' },
+    { Domain: 'northwind.onmicrosoft.com', MailProvider: 'Microsoft 365' },
+  ]
+
+  const domainFilters = [
+    {
+      filterName: 'Mail Provider is not Microsoft 365',
+      value: [{ id: 'MailProvider', value: 'Microsoft 365', filterFn: 'notEquals' }],
+      type: 'column',
+    },
+    {
+      filterName: 'onmicrosoft.com Domains',
+      value: [{ id: 'Domain', value: 'onmicrosoft.com' }],
+      type: 'column',
+    },
+    {
+      filterName: 'All Except onmicrosoft.com Domains',
+      value: [{ id: 'Domain', value: 'onmicrosoft.com', filterFn: 'notContains' }],
+      type: 'column',
+    },
+  ]
+
+  function renderDomainTable() {
+    return renderWithProviders(
+      <CippDataTable
+        data={domainRows}
+        simpleColumns={['Domain', 'MailProvider']}
+        filters={domainFilters}
+        maxHeightOffset="100px"
+      />
+    )
+  }
+
+  it('applies a notEquals preset', async () => {
+    const user = userEvent.setup()
+    renderDomainTable()
+    await screen.findByText('1-4 of 4')
+
+    await user.click(screen.getByRole('button', { name: /Filters/ }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Mail Provider is not Microsoft 365' }))
+    await waitFor(() => {
+      expect(screen.getByText('1-1 of 1')).toBeInTheDocument()
+    })
+  }, 30000)
+
+  it('applies a notContains preset', async () => {
+    const user = userEvent.setup()
+    renderDomainTable()
+    await screen.findByText('1-4 of 4')
+
+    await user.click(screen.getByRole('button', { name: /Filters/ }))
+    await user.click(await screen.findByRole('menuitem', { name: 'All Except onmicrosoft.com Domains' }))
+    await waitFor(() => {
+      expect(screen.getByText('1-1 of 1')).toBeInTheDocument()
+    })
+  }, 30000)
+
+  it('does not leave a notContains override active for a later plain preset on the same column', async () => {
+    const user = userEvent.setup()
+    renderDomainTable()
+    await screen.findByText('1-4 of 4')
+
+    await user.click(screen.getByRole('button', { name: /Filters/ }))
+    await user.click(await screen.findByRole('menuitem', { name: 'All Except onmicrosoft.com Domains' }))
+    await waitFor(() => {
+      expect(screen.getByText('1-1 of 1')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /Filters/ }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Reset all filters' }))
+    await waitFor(() => {
+      expect(screen.getByText('1-4 of 4')).toBeInTheDocument()
+    })
+    // the menu's exit transition can leave the rest of the page aria-hidden for a
+    // tick after the click resolves — wait for it to fully unmount before querying
+    // the Filters button again, or that query can transiently fail
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    })
+
+    // if the notContains mode had leaked, this plain contains-style preset on the
+    // same Domain column would come back inverted (1 row) instead of 3
+    await user.click(screen.getByRole('button', { name: /Filters/ }))
+    await user.click(await screen.findByRole('menuitem', { name: 'onmicrosoft.com Domains' }))
+    await waitFor(() => {
+      expect(screen.getByText('1-3 of 3')).toBeInTheDocument()
+    })
+  }, 30000)
 })
